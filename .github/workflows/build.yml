@@ -1,0 +1,33 @@
+name: Test and build Linux AppImage
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libpulse0
+          python -m pip install -r requirements-build.txt
+      - name: Download official AppImage build tool
+        run: |
+          curl --fail --location --retry 3 https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -o "$RUNNER_TEMP/appimagetool"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+      - name: Build
+        run: APPIMAGETOOL="$RUNNER_TEMP/appimagetool" bash packaging/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dlpTube-linux-x86_64
+          path: |
+            dist/*.AppImage
+            dist/*.sha256
+          if-no-files-found: error

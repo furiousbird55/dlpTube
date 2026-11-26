@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=dlpTube
+Comment=Browse and play local yt-dlp archives
+Exec=dlptube
+Icon=dlptube
+Terminal=false
+Categories=AudioVideo;Video;Player;
