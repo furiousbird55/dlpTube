@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from PySide6.QtCore import Qt, QUrl, QSize, QSettings, QThread, Signal, QStandardPaths, QEvent
 from PySide6.QtGui import QIcon, QPixmap, QShortcut, QKeySequence, QColor, QPalette
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem, QTabWidget, QFileDialog, QSlider, QStackedWidget, QMessageBox, QPlainTextEdit, QLineEdit)
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem, QTabWidget, QFileDialog, QSlider, QStackedWidget, QMessageBox, QPlainTextEdit, QLineEdit, QCheckBox)
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from archive import scan
@@ -75,6 +75,8 @@ class Window(QMainWindow):
         self.full = False
         self.closing = False
         self.pending_folder = None
+        self.play_queue = []
+        self.play_index = -1
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
         library = QWidget()
@@ -157,6 +159,10 @@ class Window(QMainWindow):
         full.clicked.connect(self.fullscreen)
         for w in (self.toggle, self.time): controls.addWidget(w)
         controls.addStretch()
+        self.autoplay = QCheckBox('Autoplay')
+        self.autoplay.setChecked(self.settings.value('autoplay', False, type=bool))
+        self.autoplay.toggled.connect(lambda enabled: self.settings.setValue('autoplay', enabled))
+        controls.addWidget(self.autoplay)
         for w in (QLabel('Volume'), volume, full): controls.addWidget(w)
         play_layout.addWidget(self.controls_widget)
         self.description_button = QPushButton('Show description')
@@ -171,6 +177,7 @@ class Window(QMainWindow):
         self.stack.addWidget(page)
         self.player.positionChanged.connect(self.update_time)
         self.player.durationChanged.connect(self.update_duration)
+        self.player.mediaStatusChanged.connect(self.on_media_status)
         self.player.playbackStateChanged.connect(lambda state: self.toggle.setText('Pause' if state == QMediaPlayer.PlaybackState.PlayingState else 'Play'))
         self.player.errorOccurred.connect(lambda error, message: QMessageBox.warning(self, 'Playback error', message))
         self.space = QShortcut(QKeySequence('Space'), page)
@@ -276,16 +283,37 @@ class Window(QMainWindow):
         if not video.path.is_file():
             QMessageBox.warning(self, 'Video unavailable', 'Reconnect your HDD and rescan if its mount path changed.')
             return
-        self.title.setText(video.title)
-        self.description.setPlainText(video.description or 'No description saved for this video.')
-        self.description_button.setChecked(False)
+        view = item.listWidget()
+        visible = [view.item(i) for i in range(view.count()) if not view.item(i).isHidden()]
+        self.play_queue = [entry.data(Qt.ItemDataRole.UserRole) for entry in visible]
+        self.play_index = visible.index(item)
         for view in (self.ordered, self.grid):
             view.clearSelection()
             view.setCurrentItem(None)
             view.viewport().update()
         self.stack.setCurrentIndex(1)
+        self.play_video(video)
+    def play_video(self, video):
+        self.title.setText(video.title)
+        self.description.setPlainText(video.description or 'No description saved for this video.')
+        self.description_button.setChecked(False)
         self.player.setSource(QUrl.fromLocalFile(str(video.path)))
         self.player.play()
+    def on_media_status(self, status):
+        if (status != QMediaPlayer.MediaStatus.EndOfMedia
+                or self.stack.currentIndex() != 1
+                or not self.autoplay.isChecked()
+                or self.play_index < 0 or self.closing):
+            return
+        next_index = self.play_index + 1
+        if next_index >= len(self.play_queue):
+            return
+        video = self.play_queue[next_index]
+        if not video.path.is_file():
+            QMessageBox.warning(self, 'Video unavailable', 'Reconnect your HDD to continue playback.')
+            return
+        self.play_index = next_index
+        self.play_video(video)
     def eventFilter(self, watched, event):
         # Handle seeking even when a slider or description has keyboard focus.
         if (event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
@@ -336,6 +364,8 @@ class Window(QMainWindow):
         if self.full: self.fullscreen()
         elif self.stack.currentIndex() == 1: self.back()
     def back(self):
+        self.play_queue = []
+        self.play_index = -1
         if self.full: self.fullscreen()
         self.player.stop()
         self.player.setSource(QUrl())
@@ -355,6 +385,8 @@ class Window(QMainWindow):
                 self.thumb_worker.finished.connect(self.close)
             self.status.setText('Finishing current thumbnail before closing…')
         else:
+            self.play_queue = []
+            self.play_index = -1
             self.player.stop()
             event.accept()
 
