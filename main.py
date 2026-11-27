@@ -2,9 +2,9 @@ import random
 import shutil
 import sys
 from pathlib import Path
-from PySide6.QtCore import Qt, QUrl, QSize, QSettings, QThread, Signal, QStandardPaths
+from PySide6.QtCore import Qt, QUrl, QSize, QSettings, QThread, Signal, QStandardPaths, QEvent
 from PySide6.QtGui import QIcon, QPixmap, QShortcut, QKeySequence, QColor, QPalette
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem, QTabWidget, QFileDialog, QSlider, QStackedWidget, QMessageBox, QPlainTextEdit)
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QListWidgetItem, QTabWidget, QFileDialog, QSlider, QStackedWidget, QMessageBox, QPlainTextEdit, QLineEdit)
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from archive import scan
@@ -91,6 +91,11 @@ class Window(QMainWindow):
         for w in (self.folder, self.reload, self.shuffle): top.addWidget(w)
         top.addWidget(self.status, 1)
         layout.addLayout(top)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search videos…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.filter_videos)
+        layout.addWidget(self.search)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
         self.ordered = QListWidget()
@@ -177,6 +182,8 @@ class Window(QMainWindow):
         self.escape = QShortcut(QKeySequence('Escape'), self)
         self.escape.activated.connect(self.escape_action)
         self.setStyleSheet('''QWidget {background:#171717;color:#eeeeee;font-size:14px;} QPushButton {background:#303030;border:0;padding:9px 14px;border-radius:6px;} QPushButton:hover {background:#454545;} QPushButton:disabled {color:#777;} QListWidget {border:0;outline:0;} QListWidget::item {padding:5px;border-radius:6px;} QListWidget::item:hover, QListWidget::item:selected {background:#333;color:#eeeeee;} QListWidget::item:selected:!active {background:#333;color:#eeeeee;} QTabBar::tab {padding:12px 24px;background:#222;} QTabBar::tab:selected {background:#404040;} QTabWidget::pane {border:0;}''')
+        self.search.setStyleSheet("QLineEdit {background:#252525; border:1px solid #454545; border-radius:6px; padding:9px 12px;}")
+        QApplication.instance().installEventFilter(self)
         saved = self.settings.value('folder', '')
         if saved: self.load(saved)
     def choose(self):
@@ -245,6 +252,16 @@ class Window(QMainWindow):
         item.setForeground(QColor("#eeeeee"))
         view.addItem(item)
         self.items.setdefault(video.path, {})[view] = item
+        item.setHidden(not self.matches_search(video))
+    def matches_search(self, video):
+        query = self.search.text().strip().casefold()
+        return query in video.title.casefold() or query in video.path.name.casefold()
+    def filter_videos(self, _text):
+        for view in (self.ordered, self.grid):
+            for i in range(view.count()):
+                item = view.item(i)
+                video = item.data(Qt.ItemDataRole.UserRole)
+                item.setHidden(not self.matches_search(video))
     def fill_grid(self):
         videos = self.videos.copy()
         random.shuffle(videos)
@@ -269,6 +286,21 @@ class Window(QMainWindow):
         self.stack.setCurrentIndex(1)
         self.player.setSource(QUrl.fromLocalFile(str(video.path)))
         self.player.play()
+    def eventFilter(self, watched, event):
+        # Handle seeking even when a slider or description has keyboard focus.
+        if (event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
+                and self.stack.currentIndex() == 1
+                and QApplication.activeWindow() is self
+                and QApplication.activeModalWidget() is None
+                and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right)
+                and event.modifiers() in (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.KeypadModifier)):
+            if event.type() == QEvent.Type.KeyPress and self.player.isSeekable():
+                delta = -10000 if event.key() == Qt.Key.Key_Left else 10000
+                position = max(0, min(self.player.duration(), self.player.position() + delta))
+                self.player.setPosition(position)
+            event.accept()
+            return True
+        return super().eventFilter(watched, event)
     def toggle_play(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState: self.player.pause()
         else: self.player.play()
