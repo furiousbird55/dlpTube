@@ -12,8 +12,6 @@ A lightweight Linux desktop viewer for local yt-dlp video archives.
 
 ## Installation
 
-Download the AppImage from Releases, make it executable and run it.
-
 FFmpeg is required for generating missing thumbnails.
 
 ## Run from source
